@@ -1,0 +1,15 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+sqlalchemy>=2.0,<3
+geoalchemy2>=0.15,<1
+shapely>=2.0,<3
+psycopg[binary]>=3.2,<4
+pydantic>=2.7,<3
+python-dotenv>=1.0,<2
+requests>=2.32,<3
+numpy>=2.0,<3
+pandas>=2.2,<3
+scikit-learn>=1.5,<2
+pythermalcomfort>=3.7,<4
+pytest>=8.0,<9
+httpx>=0.27,<1
