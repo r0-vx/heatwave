@@ -1,67 +1,53 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
-import {
-  AlertTriangle,
-  ArrowRight,
-  CheckCircle2,
-  ChevronRight,
-  CircleDot,
-  Clock3,
-  Database,
-  ExternalLink,
-  Gauge,
-  Info,
-  Layers3,
-  MapPinned,
-  RefreshCw,
-  ShieldAlert,
-  ThermometerSun,
-  UsersRound,
-  Wind,
-  X,
-  Zap,
-} from 'lucide-react'
+import { Info } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 import { AppShell } from '../components/AppShell'
 import { ErrorState, LoadingState } from '../components/LoadingState'
-import { RiskBadge } from '../components/RiskBadge'
 import { RiskMap, type MapMetric } from '../components/RiskMap'
 import {
   clearApiCache,
-  getActionPlan,
+  getAlerts,
   getDashboardSummary,
   getEvents,
-  getSystemStatus,
   getWardBoundaries,
   getWards,
   refreshSystemStatus,
-  updateActionTask,
 } from '../services/api'
-import type { ActionPlan, DashboardSummary, RiskCategory, SystemEvent, SystemStatus, WardBoundaryCollection, WardSummary } from '../types'
+import type { AlertLog, DashboardSummary, RiskCategory, SystemEvent, WardBoundaryCollection, WardSummary } from '../types'
 
-const riskOptions: Array<'ALL' | RiskCategory> = ['ALL', 'LOW', 'CAUTION', 'HIGH', 'DANGEROUS', 'EXTREME']
-const layerOptions: Array<{ id: MapMetric; label: string }> = [
-  { id: 'risk', label: 'Risk' },
-  { id: 'htsi', label: 'HTSI' },
-  { id: 'wbgt', label: 'WBGT' },
-  { id: 'vulnerability', label: 'PVI' },
-  { id: 'health', label: 'Health' },
-]
+const riskLabels: Record<RiskCategory, string> = { LOW: 'Low', CAUTION: 'Caution', HIGH: 'High', DANGEROUS: 'Dangerous', EXTREME: 'Extreme' }
+const metricOrder: MapMetric[] = ['risk', 'htsi', 'wbgt', 'vulnerability']
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
+}
+
+function riskLevel(category: RiskCategory) {
+  return category === 'LOW' ? 1 : category === 'CAUTION' ? 2 : category === 'HIGH' ? 3 : category === 'DANGEROUS' ? 3.5 : 4
+}
+
+function alertStatus(alert: AlertLog) {
+  if (alert.delivery_confirmed) return { label: 'Delivered', detail: 'Delivery was confirmed by the provider.' }
+  if (alert.simulated) return { label: 'Simulated', detail: 'No external message was sent.' }
+  const status = alert.status.toUpperCase()
+  if (status.includes('FAILED')) return { label: 'Failed', detail: alert.status.replaceAll('_', ' ') }
+  if (status.includes('ACCEPTED')) return { label: 'Accepted', detail: 'The provider accepted the request; delivery is not confirmed.' }
+  if (status.includes('QUEUED')) return { label: 'Queued', detail: alert.status.replaceAll('_', ' ') }
+  if (status.includes('SENT')) return { label: 'Sent', detail: 'The request was sent; delivery is not confirmed.' }
+  return { label: 'Draft', detail: alert.status.replaceAll('_', ' ') }
+}
 
 export function DashboardPage() {
+  const navigate = useNavigate()
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [boundaries, setBoundaries] = useState<WardBoundaryCollection | null>(null)
   const [wards, setWards] = useState<WardSummary[]>([])
+  const [tomorrowWards, setTomorrowWards] = useState<WardSummary[]>([])
   const [events, setEvents] = useState<SystemEvent[]>([])
-  const [system, setSystem] = useState<SystemStatus | null>(null)
-  const [plan, setPlan] = useState<ActionPlan | null>(null)
-  const [selectedId, setSelectedId] = useState('')
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [alerts, setAlerts] = useState<AlertLog[]>([])
   const [forecastDay, setForecastDay] = useState(0)
-  const [riskFilter, setRiskFilter] = useState<'ALL' | RiskCategory>('ALL')
-  const [vulnerability, setVulnerability] = useState('0')
   const [metric, setMetric] = useState<MapMetric>('risk')
   const [loading, setLoading] = useState(true)
-  const [mapLoading, setMapLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
 
@@ -69,49 +55,23 @@ export function DashboardPage() {
     setLoading(true)
     setError('')
     try {
-      const [summaryData, boundaryData, eventData, systemData] = await Promise.all([
-        getDashboardSummary(), getWardBoundaries(), getEvents(12), getSystemStatus(),
+      const [summaryData, boundaryData, eventData, alertData, tomorrowData] = await Promise.all([
+        getDashboardSummary(), getWardBoundaries(), getEvents(16), getAlerts(), getWards(1),
       ])
       setSummary(summaryData)
       setBoundaries(boundaryData)
       setWards(summaryData.wards)
+      setTomorrowWards(tomorrowData)
       setEvents(eventData)
-      setSystem(systemData)
-      setSelectedId((current) => current || summaryData.metrics.highest_risk_ward_id)
+      setAlerts(alertData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load the municipal control room')
+      setError(err instanceof Error ? err.message : 'Unable to load the Mumbai dashboard')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
-  useEffect(() => {
-    if (!summary) return
-    setMapLoading(true)
-    void getWards(forecastDay, riskFilter === 'ALL' ? undefined : riskFilter, Number(vulnerability) || undefined)
-      .then(setWards)
-      .catch((err) => setError(err instanceof Error ? err.message : 'The selected forecast layer could not be loaded'))
-      .finally(() => setMapLoading(false))
-  }, [forecastDay, riskFilter, vulnerability, summary])
-  useEffect(() => {
-    if (!selectedId || !drawerOpen) return
-    void getActionPlan(selectedId, forecastDay).then(setPlan).catch(() => setPlan(null))
-  }, [selectedId, forecastDay, drawerOpen])
-
-  const allRows = summary?.wards ?? []
-  const selectedWard = useMemo(() => {
-    const rows = wards.length ? wards : allRows
-    return rows.find((ward) => ward.id === selectedId) ?? allRows.find((ward) => ward.id === selectedId) ?? rows[0]
-  }, [wards, allRows, selectedId])
-  const filteredHighCount = wards.filter((ward) => ['HIGH', 'DANGEROUS', 'EXTREME'].includes(ward.risk_category)).length
-  const demoActive = Boolean(summary?.is_demo)
-
-  const chooseWard = (id: string) => {
-    setSelectedId(id)
-    setDrawerOpen(true)
-  }
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setRefreshing(true)
     try {
       await refreshSystemStatus()
@@ -120,91 +80,117 @@ export function DashboardPage() {
     } finally {
       setRefreshing(false)
     }
-  }
-  const advanceTask = async (taskKey: string, current: ActionPlan['actions'][number]['status']) => {
-    if (!selectedWard) return
-    const next = current === 'PENDING' ? 'ACKNOWLEDGED' : current === 'ACKNOWLEDGED' ? 'IN_PROGRESS' : 'COMPLETE'
-    const updated = await updateActionTask(selectedWard.id, taskKey, next, forecastDay)
-    setPlan(updated)
-    clearApiCache()
-    setEvents(await getEvents(12))
-  }
+  }, [load])
 
-  if (loading) return <AppShell city="Mumbai"><LoadingState label="Loading BMC ward operations…" /></AppShell>
-  if (error || !summary || !boundaries) return <AppShell city="Mumbai"><ErrorState message={error || 'No operational data returned.'} /></AppShell>
+  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    if (!summary) return
+    void getWards(forecastDay).then(setWards).catch((err) => setError(err instanceof Error ? err.message : 'Unable to update the ward overview'))
+  }, [forecastDay, summary])
 
-  return <AppShell source={demoActive ? 'DEMO FALLBACK' : 'IMD CONNECTED'} city={summary.city}>
-    <div className="ops-page-head">
-      <div>
-        <div className="ops-eyebrow"><span />MUMBAI HEAT-HEALTH OPERATIONS</div>
-        <h1>Municipal control room</h1>
-        <p>Ward-scale thermal stress, vulnerability and response posture for BMC operators.</p>
+  const topWards = useMemo(() => [...(summary?.wards ?? [])].sort((a, b) => b.htsi - a.htsi).slice(0, 5), [summary])
+
+  if (loading) return <AppShell city="Mumbai"><LoadingState label="Loading Mumbai ward operations…" /></AppShell>
+  if (error || !summary || !boundaries) return <AppShell city="Mumbai"><ErrorState message={error || 'No dashboard data returned.'} /></AppShell>
+
+  const extremeCount = summary.wards.filter((ward) => ward.risk_category === 'EXTREME').length
+  const highCount = summary.wards.filter((ward) => ['HIGH', 'DANGEROUS'].includes(ward.risk_category)).length
+  const populationAtRisk = summary.wards.filter((ward) => ['HIGH', 'DANGEROUS', 'EXTREME'].includes(ward.risk_category)).reduce((total, ward) => total + ward.population, 0)
+
+  return <AppShell city={summary.city} updatedAt={summary.as_of} onRefresh={() => void refresh()} refreshing={refreshing}>
+    <div className="final-dashboard">
+      <section className="final-map-panel" aria-label="Mumbai ward risk overview">
+        <RiskMap boundaries={boundaries} wards={wards} metric={metric} onSelect={(id) => navigate(`/map?ward=${encodeURIComponent(id)}`)} onCycleMetric={() => setMetric((current) => metricOrder[(metricOrder.indexOf(current) + 1) % metricOrder.length])} />
+        <div className="embedded-map-toolbar" aria-label="Map controls">
+          <div className="map-control-group">{([['risk', 'Risk'], ['htsi', 'HTSI'], ['wbgt', 'WBGT'], ['vulnerability', 'Vulnerability']] as Array<[MapMetric, string]>).map(([id, label]) => <button key={id} className={metric === id ? 'selected' : ''} onClick={() => setMetric(id)}>{label}</button>)}</div>
+          <div className="map-control-group forecast-controls">{[1, 2, 3].map((day) => <button key={day} className={forecastDay === day ? 'selected' : ''} onClick={() => setForecastDay(forecastDay === day ? 0 : day)}>+{day * 24}h</button>)}</div>
+        </div>
+      </section>
+
+      <div className="right-analytics">
+        <section className="reference-panel current-overview-panel">
+          <PanelHeader title="Current Overview (Mumbai)" info={summary.disclaimer} fallback={summary.is_demo} />
+          <div className="overview-primary">
+            <Metric label="Temperature" value={`${summary.metrics.temperature.toFixed(1)}°C`} />
+            <Metric label="WBGT" value={`${summary.metrics.wbgt.toFixed(1)}°C`} />
+            <Metric label="HTSI" value={summary.metrics.htsi.toFixed(0)} />
+            <div className="overview-metric"><span>Health Risk</span><RiskText category={summary.metrics.risk_category} /></div>
+          </div>
+          <div className="overview-secondary">
+            <Metric label="Wards at Extreme Risk" value={String(extremeCount)} />
+            <Metric label="Wards at High Risk" value={String(highCount)} />
+            <Metric label="Population at Risk" value={`${(populationAtRisk / 100_000).toFixed(1)} L`} />
+          </div>
+        </section>
+
+        <section className="reference-panel forecast-reference-panel">
+          <PanelHeader title="5 Day Forecast (Max Risk for Mumbai)" action={<Link to="/forecast">View full</Link>} />
+          <div className="forecast-status-row">{summary.forecast.slice(0, 5).map((day) => <button key={day.day_offset} onClick={() => navigate(`/forecast?step=${day.day_offset * 24}`)}><span>{day.day_offset === 0 ? 'Today' : `+${day.day_offset} Day`}</span><RiskText category={day.risk_category} /></button>)}</div>
+          <ForecastLineChart rows={summary.forecast.slice(0, 5)} />
+        </section>
+
+        <section className="reference-panel top-wards-panel">
+          <PanelHeader title="Top Wards by Risk" action={<Link to="/map">View all</Link>} />
+          <div className="compact-table top-wards-table">
+            <div className="compact-table-head"><span>Ward</span><span>Risk Level</span><span>HTSI</span><span>PVI</span><span>Trend</span></div>
+            {topWards.map((ward) => {
+              const tomorrow = tomorrowWards.find((row) => row.id === ward.id)
+              const delta = (tomorrow?.htsi ?? ward.htsi) - ward.htsi
+              return <button className="compact-table-row" key={ward.id} onClick={() => navigate(`/map?ward=${encodeURIComponent(ward.id)}`)}><span>{ward.code}</span><RiskText category={ward.risk_category} /><strong>{ward.htsi.toFixed(0)}</strong><strong>{ward.vulnerability_index.toFixed(0)}</strong><span className={`trend ${delta > 1 ? 'trend-up' : delta < -1 ? 'trend-down' : ''}`}>{delta > 1 ? '↗' : delta < -1 ? '↘' : '→'}</span></button>
+            })}
+          </div>
+        </section>
       </div>
-      <div className="ops-head-actions">
-        <span className="snapshot-time"><Clock3 size={13} />Snapshot {new Date(summary.as_of).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST</span>
-        <button className="ops-button" onClick={() => void refresh()} disabled={refreshing}><RefreshCw size={14} className={refreshing ? 'spin' : ''} />{refreshing ? 'Checking sources' : 'Refresh status'}</button>
-        <Link to="/alerts" className="ops-button ops-button-primary"><ShieldAlert size={14} />Alert console</Link>
+
+      <div className="bottom-operations">
+        <section className="reference-panel recent-alerts-panel">
+          <PanelHeader title="Recent Alerts" action={<Link to="/alerts">View all</Link>} />
+          <div className="compact-table recent-alerts-table">
+            <div className="compact-table-head"><span>Time</span><span>Ward</span><span>Severity</span><span>Message</span><span>Status</span></div>
+            {alerts.slice(0, 4).map((alert) => {
+              const ward = summary.wards.find((row) => row.id === alert.ward_id)
+              const status = alertStatus(alert)
+              return <div className="compact-table-row" key={alert.id}><time>{formatTime(alert.generated_at)}</time><span>{ward?.code ?? '—'}</span>{ward ? <RiskText category={ward.risk_category} /> : <span>—</span>}<span className="ellipsis-cell" title={alert.message}>{alert.message}</span><span className="compact-alert-status" title={status.detail}>{status.label}</span></div>
+            })}
+            {!alerts.length && <div className="compact-empty">No alert activity recorded</div>}
+          </div>
+        </section>
+
+        <section className="reference-panel system-events-panel">
+          <PanelHeader title="System Events" action={<Link to="/sources">View all</Link>} />
+          <div className="compact-table system-events-table">
+            <div className="compact-table-head"><span>Time</span><span>Event</span></div>
+            {events.slice(0, 5).map((event) => <div className="compact-table-row" key={event.id}><time>{formatTime(event.timestamp)}</time><span className="ellipsis-cell" title={event.message}>{event.message}</span></div>)}
+          </div>
+        </section>
       </div>
     </div>
-
-    {demoActive && <div className="fallback-banner"><AlertTriangle size={16} /><div><strong>OFFICIAL WEATHER FEED UNAVAILABLE — DEMO FALLBACK ACTIVE</strong><span>{summary.source}. Actual BMC polygons remain in use; demographic and health-outcome limitations are preserved in every ward record.</span></div><Link to="/sources">Inspect provenance <ArrowRight size={13} /></Link></div>}
-
-    <section className="ops-kpi-strip" aria-label="Current city heat-health posture">
-      <FlatKpi icon={<Gauge />} label="Peak HTSI" value={summary.metrics.htsi.toFixed(0)} unit="/100" detail={summary.metrics.risk_category} tone="red" />
-      <FlatKpi icon={<ThermometerSun />} label="Peak heat index" value={summary.metrics.heat_index.toFixed(1)} unit="°C" detail="apparent temperature" tone="amber" />
-      <FlatKpi icon={<Wind />} label="Peak WBGT" value={summary.metrics.wbgt.toFixed(1)} unit="°C" detail="estimated" tone="orange" />
-      <FlatKpi icon={<UsersRound />} label="Priority wards" value={String(summary.metrics.high_risk_ward_count)} unit="/24" detail="high or above" tone="red" />
-      <FlatKpi icon={<MapPinned />} label="Highest risk" value={summary.metrics.highest_risk_ward.split('·')[0].trim()} detail={summary.metrics.highest_risk_ward.split('·')[1]?.trim() ?? ''} tone="teal" />
-    </section>
-
-    <section className="ops-map-section">
-      <div className="ops-map-toolbar">
-        <div className="toolbar-title"><Layers3 size={15} /><span><strong>Ward risk surface</strong><small>Click a polygon to open the operational drawer</small></span></div>
-        <div className="layer-tabs">{layerOptions.map((option) => <button key={option.id} className={metric === option.id ? 'active' : ''} onClick={() => setMetric(option.id)}>{option.label}</button>)}</div>
-        <label className="ops-select">FORECAST<select value={forecastDay} onChange={(event) => setForecastDay(Number(event.target.value))}>{summary.forecast.map((day) => <option value={day.day_offset} key={day.day_offset}>{day.label} · {new Date(day.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</option>)}</select></label>
-        <label className="ops-select">RISK<select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as typeof riskFilter)}>{riskOptions.map((option) => <option value={option} key={option}>{option === 'ALL' ? 'ALL WARDS' : option}</option>)}</select></label>
-        <label className="ops-select">MIN PVI<select value={vulnerability} onChange={(event) => setVulnerability(event.target.value)}><option value="0">ANY</option><option value="50">50+</option><option value="65">65+</option><option value="75">75+</option></select></label>
-      </div>
-      <div className="ops-map-stage">
-        {mapLoading && <div className="map-update-chip"><RefreshCw size={12} className="spin" />Updating risk attributes</div>}
-        <RiskMap boundaries={boundaries} wards={wards} selectedId={selectedWard?.id} metric={metric} onSelect={chooseWard} />
-        <div className="map-filter-count"><CircleDot size={11} />{wards.length} visible wards · {filteredHighCount} priority</div>
-        <aside className={`ward-drawer ${drawerOpen && selectedWard ? 'ward-drawer-open' : ''}`} aria-hidden={!drawerOpen}>
-          {selectedWard && <>
-            <div className="drawer-head"><div><span>{selectedWard.code} WARD · {forecastDay === 0 ? 'TODAY' : `DAY +${forecastDay}`}</span><h2>{selectedWard.locality}</h2></div><button onClick={() => setDrawerOpen(false)} aria-label="Close ward drawer"><X size={17} /></button></div>
-            <div className="drawer-risk"><RiskBadge category={selectedWard.risk_category} /><span>HTSI <strong>{selectedWard.htsi.toFixed(0)}</strong>/100</span><span>HEALTH <strong>{selectedWard.health_risk.toFixed(0)}</strong>/100</span></div>
-            <div className="drawer-metrics"><div><span>TEMP</span><strong>{selectedWard.temperature.toFixed(1)}°C</strong></div><div><span>WBGT</span><strong>{selectedWard.wbgt.toFixed(1)}°C</strong></div><div><span>UTCI</span><strong>{selectedWard.utci.toFixed(1)}°C</strong></div><div><span>PVI</span><strong>{selectedWard.vulnerability_index.toFixed(0)}</strong></div></div>
-            <div className="drawer-section"><div className="drawer-section-title">WHY THIS RATING <Info size={12} /></div>{selectedWard.explanation.slice(0, 4).map((reason) => <p className="drawer-driver" key={reason}><ChevronRight size={12} />{reason}</p>)}</div>
-            <div className="drawer-section"><div className="drawer-section-title">RESPONSE TASKS <Zap size={12} /></div>{plan ? plan.actions.slice(0, 3).map((task) => <div className="drawer-task" key={task.task_key}><div><span className={`severity-tag severity-${task.severity.toLowerCase()}`}>{task.severity}</span><strong>{task.title}</strong><small>{task.owner}</small></div><button disabled={task.status === 'COMPLETE'} onClick={() => void advanceTask(task.task_key, task.status)}>{task.status === 'PENDING' ? 'Acknowledge' : task.status === 'ACKNOWLEDGED' ? 'Start' : task.status === 'IN_PROGRESS' ? 'Complete' : <><CheckCircle2 size={12} />Complete</>}</button></div>) : <span className="drawer-loading">Loading response tasks…</span>}</div>
-            <div className="drawer-source"><Database size={13} /><span><strong>Weather</strong>{selectedWard.source}</span></div>
-            <div className="drawer-actions"><Link to={`/ward/${selectedWard.id}`}>Full ward brief <ExternalLink size={12} /></Link><Link to={`/alerts?ward=${selectedWard.id}`}>Prepare alert <ShieldAlert size={12} /></Link></div>
-          </>}
-        </aside>
-      </div>
-    </section>
-
-    <section className="forecast-rail">
-      <div className="rail-label"><span>6-DAY POSTURE</span><small>Select forecast layer</small></div>
-      {summary.forecast.map((day) => <button key={day.day_offset} className={forecastDay === day.day_offset ? 'active' : ''} onClick={() => setForecastDay(day.day_offset)}><span>{day.label}</span><strong>{day.max_htsi.toFixed(0)}</strong><small>{day.high_risk_ward_count} priority · {day.risk_category}</small></button>)}
-    </section>
-
-    <section className="ops-lower-grid">
-      <div className="ops-panel priority-panel">
-        <div className="ops-panel-head"><div><span>PRIORITY QUEUE</span><h2>Highest-risk wards</h2></div><Link to="/explorer">Open table <ArrowRight size={13} /></Link></div>
-        <div className="ops-ward-table"><div className="ops-table-head"><span>WARD</span><span>HTSI</span><span>PVI</span><span>POSTURE</span></div>{[...wards].sort((a, b) => b.htsi - a.htsi).slice(0, 6).map((ward) => <button key={ward.id} onClick={() => chooseWard(ward.id)}><span><b>{ward.code}</b><em>{ward.locality}</em></span><strong>{ward.htsi.toFixed(0)}</strong><strong>{ward.vulnerability_index.toFixed(0)}</strong><RiskBadge category={ward.risk_category} compact /></button>)}</div>
-      </div>
-      <div className="ops-panel event-panel">
-        <div className="ops-panel-head"><div><span>AUDIT STREAM</span><h2>System events</h2></div><Link to="/sources">Sources <ArrowRight size={13} /></Link></div>
-        <div className="event-stream">{events.slice(0, 6).map((event) => <div className="event-row" key={event.id}><span className={`event-dot event-${event.severity.toLowerCase()}`} /><time>{new Date(event.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}</time><div><strong>{event.category.replaceAll('_', ' ')}</strong><p>{event.message}</p><small>{event.source}</small></div></div>)}</div>
-      </div>
-      <div className="ops-panel posture-panel">
-        <div className="ops-panel-head"><div><span>INFRASTRUCTURE</span><h2>System posture</h2></div><CircleDot size={15} /></div>
-        <div className="component-list">{system?.components.map((component) => <div key={component.name}><span className={`component-status status-${component.status.toLowerCase().replaceAll('_', '-')}`} /><p><strong>{component.name}</strong><small>{component.detail}</small></p><em>{component.status.replaceAll('_', ' ')}</em></div>)}</div>
-      </div>
-    </section>
   </AppShell>
 }
 
-function FlatKpi({ icon, label, value, unit, detail, tone }: { icon: React.ReactNode; label: string; value: string; unit?: string; detail: string; tone: string }) {
-  return <div className={`flat-kpi kpi-${tone}`}><span className="flat-kpi-icon">{icon}</span><div><span>{label}</span><strong>{value}<small>{unit}</small></strong><em>{detail}</em></div></div>
+function PanelHeader({ title, action, info, fallback }: { title: string; action?: React.ReactNode; info?: string; fallback?: boolean }) {
+  return <div className="reference-panel-head"><h2>{title}</h2><div>{fallback && <span className="data-mode-label">Fallback source</span>}{action}{info && <span className="panel-info" title={info}><Info size={11} /></span>}</div></div>
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="overview-metric"><span>{label}</span><strong>{value}</strong></div>
+}
+
+function RiskText({ category }: { category: RiskCategory }) {
+  return <span className={`risk-inline risk-inline-${category.toLowerCase()}`}><i />{riskLabels[category]}</span>
+}
+
+function ForecastLineChart({ rows }: { rows: DashboardSummary['forecast'] }) {
+  const values = rows.map((row) => riskLevel(row.risk_category))
+  const points = values.map((value, index) => `${48 + index * 55},${82 - ((value - 1) / 3) * 58}`).join(' ')
+  return <svg className="forecast-line-chart" viewBox="0 0 300 112" role="img" aria-label="Five day maximum risk trend">
+    {[24, 43, 63, 82].map((y) => <line key={y} x1="42" x2="280" y1={y} y2={y} />)}
+    {['Extreme', 'High', 'Moderate', 'Low'].map((label, index) => <text key={label} x="0" y={27 + index * 19}>{label}</text>)}
+    <polyline points={points} />
+    {rows.map((row, index) => {
+      const x = 48 + index * 55
+      const y = 82 - ((riskLevel(row.risk_category) - 1) / 3) * 58
+      return <g key={row.day_offset}><circle className={`chart-dot chart-dot-${row.risk_category.toLowerCase()}`} cx={x} cy={y} r="3.2" /><text className="chart-day-label" x={x} y="105" textAnchor="middle">{row.day_offset === 0 ? 'Today' : `+${row.day_offset} Day`}</text></g>
+    })}
+  </svg>
 }

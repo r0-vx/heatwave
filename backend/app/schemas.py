@@ -42,7 +42,7 @@ class AlertSimulationRequest(BaseModel):
 
 
 class AlertSendRequest(AlertSimulationRequest):
-    recipient: str = Field(..., min_length=8, max_length=18)
+    recipient: str | None = Field(None, min_length=8, max_length=18)
     confirm: bool = False
     confirmation_text: str = ""
 

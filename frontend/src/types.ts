@@ -170,6 +170,13 @@ export interface AlertProviderStatus {
   status_detail: string
 }
 
+export interface AlertAudience {
+  id: string
+  label: string
+  recipient_group: string
+  title: string
+}
+
 export interface AlertLog {
   id: number
   ward_id: string | null

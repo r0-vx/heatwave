@@ -51,6 +51,32 @@ def test_alert_simulation_is_local(client):
     assert "no external message sent" in response.json()["status"].lower()
 
 
+def test_alert_previews_are_audience_specific_and_read_only(client):
+    ward = client.get("/api/wards").json()[0]
+    audiences = client.get("/api/alerts/audiences").json()
+    assert len(audiences) == 7
+    before = len(client.get("/api/alerts").json())
+    messages = {}
+    for audience in audiences:
+        response = client.post("/api/alerts/preview", json={
+            "ward_id": ward["id"],
+            "audience": audience["id"],
+            "channel": "SMS",
+            "forecast_day": 1,
+        })
+        assert response.status_code == 200
+        selected = response.json()["previews"]["Selected Preview"]
+        assert selected["audience"] == audience["label"]
+        assert ward["name"] in selected["message"]
+        messages[audience["id"]] = selected["message"]
+    assert len(set(messages.values())) == 7
+    assert "WBGT:" in messages["outdoor_workers"]
+    assert "ambulance readiness" in messages["ambulance"]
+    assert "HTSI:" in messages["bmc"]
+    assert "triage" in messages["hospitals"]
+    assert len(client.get("/api/alerts").json()) == before
+
+
 def test_provider_registry_and_test_sms_gate(client):
     sources = client.get("/api/sources")
     assert sources.status_code == 200

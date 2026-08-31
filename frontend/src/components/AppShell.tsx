@@ -1,41 +1,40 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Activity,
-  BellRing,
+  Bell,
+  ChartNoAxesCombined,
+  ChevronDown,
   ChevronRight,
-  CircleDot,
   Command,
   Database,
+  EllipsisVertical,
   FileSearch,
-  Gauge,
+  LayoutDashboard,
+  Map,
   MapPin,
   Menu,
-  RadioTower,
+  Moon,
+  PanelLeftClose,
+  RefreshCw,
   Search,
-  ShieldCheck,
-  TableProperties,
-  Users,
+  Settings,
+  SlidersHorizontal,
+  Sun,
   X,
   Zap,
 } from 'lucide-react'
 import { getWards } from '../services/api'
 import type { WardSummary } from '../types'
 
-const navItems = [
-  { to: '/', label: 'Control room', icon: Gauge, end: true },
-  { to: '/alerts', label: 'Alert console', icon: BellRing },
-  { to: '/sources', label: 'Data sources', icon: RadioTower },
-  { to: '/explorer', label: 'Data explorer', icon: TableProperties },
-  { to: '/citizen', label: 'Public brief', icon: Users },
-]
-
-const routeLabels: Record<string, string> = {
-  '/': 'CONTROL ROOM',
-  '/alerts': 'ALERT CONSOLE',
-  '/sources': 'DATA SOURCES',
-  '/explorer': 'DATA EXPLORER',
-  '/citizen': 'PUBLIC BRIEF',
+interface AppShellProps {
+  children: ReactNode
+  source?: string
+  city?: string
+  updatedAt?: string
+  forecastCycle?: string
+  systemState?: string
+  onRefresh?: () => void
+  refreshing?: boolean
 }
 
 interface PaletteItem {
@@ -43,48 +42,88 @@ interface PaletteItem {
   label: string
   detail: string
   path: string
-  kind: 'COMMAND' | 'WARD'
+  kind: 'COMMAND' | 'FILTER' | 'WARD'
 }
 
-export function AppShell({ children, source = 'DEMO FALLBACK', city = 'Mumbai' }: { children: ReactNode; source?: string; city?: string }) {
-  const [open, setOpen] = useState(false)
+const sidebarItems = [
+  { id: 'dashboard', label: 'Dashboard', path: '/', icon: LayoutDashboard },
+  { id: 'map', label: 'Map', path: '/map', icon: Map },
+  { id: 'forecast', label: 'Forecast', path: '/forecast', icon: ChartNoAxesCombined },
+  { id: 'alerts', label: 'Alerts', path: '/alerts', icon: Bell },
+]
+
+function formatUpdate(value?: string) {
+  const date = value ? new Date(value) : new Date()
+  const datePart = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })
+  const timePart = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })
+  return `${datePart}, ${timePart} IST`
+}
+
+export function AppShell({ children, city = 'Mumbai', updatedAt, onRefresh, refreshing = false }: AppShellProps) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('heatshield-sidebar') === 'collapsed')
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(() => location.pathname === '/sources' || location.pathname === '/settings')
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => window.localStorage.getItem('heatshield-theme') === 'light' ? 'light' : 'dark')
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [clock, setClock] = useState(() => new Date())
+  const [activeIndex, setActiveIndex] = useState(0)
   const [wards, setWards] = useState<WardSummary[]>([])
-  const navigate = useNavigate()
-  const location = useLocation()
 
   useEffect(() => {
-    const timer = window.setInterval(() => setClock(new Date()), 30_000)
-    return () => window.clearInterval(timer)
-  }, [])
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem('heatshield-theme', theme)
+    window.dispatchEvent(new CustomEvent('heatshield:theme-change', { detail: theme }))
+  }, [theme])
+
+  useEffect(() => {
+    window.localStorage.setItem('heatshield-sidebar', collapsed ? 'collapsed' : 'expanded')
+    window.dispatchEvent(new Event('heatshield:layout-change'))
+    const timer = window.setTimeout(() => window.dispatchEvent(new Event('heatshield:layout-change')), 220)
+    return () => window.clearTimeout(timer)
+  }, [collapsed])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteOpen((value) => !value)
       }
-      if (event.key === 'Escape') setPaletteOpen(false)
+      if (event.key === 'Escape') {
+        setPaletteOpen(false)
+        setMobileOpen(false)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
   useEffect(() => {
     if (!paletteOpen || wards.length) return
     void getWards().then(setWards).catch(() => undefined)
   }, [paletteOpen, wards.length])
 
   const paletteItems = useMemo<PaletteItem[]>(() => [
-    { id: 'control', label: 'Open control room', detail: 'Map and municipal heat-health posture', path: '/', kind: 'COMMAND' },
-    { id: 'alerts', label: 'Open alert console', detail: 'Preview, test gate and delivery logs', path: '/alerts', kind: 'COMMAND' },
-    { id: 'sources', label: 'Inspect data-source status', detail: 'Authority, freshness, credentials and fallbacks', path: '/sources', kind: 'COMMAND' },
-    { id: 'explorer', label: 'Inspect ward data table', detail: 'Transparent metric values and CSV export', path: '/explorer', kind: 'COMMAND' },
-    ...wards.map((ward) => ({ id: ward.id, label: ward.name, detail: `${ward.risk_category} · HTSI ${ward.htsi.toFixed(0)} · ${ward.locality}`, path: `/ward/${ward.id}`, kind: 'WARD' as const })),
+    { id: 'dashboard', label: 'Open dashboard', detail: 'Mumbai current overview', path: '/', kind: 'COMMAND' },
+    { id: 'map', label: 'Open map', detail: 'Mumbai BMC ward risk surface', path: '/map', kind: 'COMMAND' },
+    { id: 'forecast', label: 'Open forecast', detail: 'Explore risk across forecast time', path: '/forecast', kind: 'COMMAND' },
+    { id: 'extreme', label: 'Show extreme wards', detail: 'Filter the map to extreme risk', path: '/map?risk=EXTREME', kind: 'FILTER' },
+    { id: 'plus48', label: 'Show +48h forecast', detail: 'Display the Day +2 ward layer', path: '/forecast?step=48', kind: 'FILTER' },
+    { id: 'alerts', label: 'Open alerts', detail: 'Review preview and MSG91 test controls', path: '/alerts', kind: 'COMMAND' },
+    { id: 'sources', label: 'Open data sources', detail: 'Inspect provenance and provider status', path: '/sources', kind: 'COMMAND' },
+    { id: 'refresh', label: 'Refresh data', detail: 'Recheck configured providers', path: '/?command=refresh', kind: 'COMMAND' },
+    { id: 'reset-map', label: 'Reset map', detail: 'Fit all Mumbai ward boundaries', path: '/map?command=reset-map', kind: 'COMMAND' },
+    ...wards.map((ward) => ({ id: ward.id, label: `${ward.code} Ward`, detail: `${ward.locality} · ${ward.risk_category} · HTSI ${ward.htsi.toFixed(0)}`, path: `/map?ward=${encodeURIComponent(ward.id)}`, kind: 'WARD' as const })),
   ], [wards])
-  const filtered = paletteItems.filter((item) => `${item.label} ${item.detail}`.toLowerCase().includes(query.toLowerCase())).slice(0, 10)
-  const currentLabel = location.pathname.startsWith('/ward/') ? 'WARD BRIEF' : routeLabels[location.pathname] ?? 'OPERATIONS'
-  const sourceClass = source.toLowerCase().includes('demo') ? 'source-warning' : 'source-connected'
+
+  const queryTerms = query.toLowerCase().trim().split(/\s+/).filter(Boolean)
+  const filtered = paletteItems.filter((item) => {
+    const searchable = `${item.label} ${item.detail}`.toLowerCase()
+    return queryTerms.every((term) => searchable.includes(term))
+  }).slice(0, 12)
+
+  useEffect(() => { setActiveIndex(0) }, [paletteOpen, query])
 
   const run = (item: PaletteItem) => {
     setPaletteOpen(false)
@@ -92,47 +131,74 @@ export function AppShell({ children, source = 'DEMO FALLBACK', city = 'Mumbai' }
     navigate(item.path)
   }
 
-  return <div className="app-shell">
-    <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
-      <div className="brand-block">
-        <div className="brand-mark"><Activity size={18} strokeWidth={2.4} /></div>
-        <div><div className="brand-name">HEAT<span>SHIELD</span></div><div className="brand-subtitle">MUMBAI / SIH26083</div></div>
-        <button className="mobile-close" onClick={() => setOpen(false)} aria-label="Close navigation"><X size={18} /></button>
+  const handlePaletteKey = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (!filtered.length) return
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      setActiveIndex((index) => (index + 1) % filtered.length)
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      setActiveIndex((index) => (index - 1 + filtered.length) % filtered.length)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      run(filtered[activeIndex] ?? filtered[0])
+    }
+  }
+
+  const isActive = (id: string) => {
+    if (id === 'dashboard') return location.pathname === '/'
+    if (id === 'map') return location.pathname === '/map' || location.pathname === '/explorer' || location.pathname.startsWith('/ward/')
+    if (id === 'forecast') return location.pathname === '/forecast'
+    return id === 'alerts' && location.pathname === '/alerts'
+  }
+
+  const toggleNavigation = () => {
+    if (window.matchMedia('(max-width: 820px)').matches) setMobileOpen((value) => !value)
+    else setCollapsed((value) => !value)
+  }
+
+  const handleRefresh = () => {
+    if (onRefresh) onRefresh()
+    else window.location.reload()
+  }
+
+  return <div className={`app-shell ${collapsed ? 'shell-collapsed' : ''}`}>
+    <header className="final-topbar">
+      <div className="header-left">
+        <button className="header-icon-button" onClick={toggleNavigation} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}><Menu size={17} /></button>
+        <label className="header-city"><MapPin size={12} /><select value={city} onChange={() => undefined} aria-label="Current city"><option value={city}>{city}</option></select><ChevronDown size={11} /></label>
       </div>
-      <div className="nav-kicker">MUNICIPAL OPERATIONS</div>
-      <nav className="primary-nav">
-        {navItems.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} onClick={() => setOpen(false)} className={({ isActive }) => `nav-link ${isActive ? 'nav-link-active' : ''}`}><Icon size={16} /><span>{label}</span>{label === 'Control room' && <span className="live-pill">LOCAL</span>}</NavLink>)}
+      <div className="header-right">
+        <span className="header-updated">Last updated: {formatUpdate(updatedAt)}</span>
+        <span className="header-separator" />
+        <button className="header-icon-button" onClick={handleRefresh} disabled={refreshing} aria-label="Refresh data" title="Refresh data"><RefreshCw size={14} className={refreshing ? 'spin' : ''} /></button>
+        <button className="header-icon-button" onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>{theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}</button>
+        <button className="theme-switch" onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')} aria-label={`Current theme: ${theme}`}><span className={theme === 'dark' ? 'theme-knob-dark' : ''} /></button>
+        <button className="header-icon-button" onClick={() => setPaletteOpen(true)} aria-label="Open utilities and command palette" title="Command palette (Ctrl+K)"><EllipsisVertical size={15} /></button>
+      </div>
+    </header>
+
+    <aside className={`final-sidebar ${mobileOpen ? 'sidebar-mobile-open' : ''}`}>
+      <nav className="final-nav" aria-label="Primary navigation">
+        {sidebarItems.map(({ id, label, path, icon: Icon }) => <Link key={id} to={path} title={collapsed ? label : undefined} onClick={() => setMobileOpen(false)} className={`final-nav-link ${isActive(id) ? 'final-nav-active' : ''}`}><Icon size={18} /><span>{label}</span></Link>)}
       </nav>
-      <div className="nav-kicker nav-kicker-lower">OPERATIONAL SCOPE</div>
-      <div className="ops-scope">
-        <div><MapPin size={14} /><span><strong>24</strong>BMC admin wards</span></div>
-        <div><ShieldCheck size={14} /><span><strong>Local</strong>no deployment</span></div>
-        <div><Database size={14} /><span><strong>SQLite</strong>auditable state</span></div>
-      </div>
-      <div className="sidebar-bottom">
-        <div className="system-status"><span className="status-pulse" />Decision engine online</div>
-        <div className="sidebar-version">v0.2 · municipal prototype</div>
+      <div className="settings-group">
+        <button className="settings-toggle" onClick={() => setSettingsOpen((value) => !value)} title={collapsed ? 'Settings' : undefined} aria-expanded={settingsOpen}><Settings size={18} /><span>Settings</span><ChevronDown size={12} className={settingsOpen ? 'settings-chevron-open' : ''} /></button>
+        {settingsOpen && <div className="settings-children">
+          <Link to="/sources" title={collapsed ? 'Data Sources' : undefined} className={location.pathname === '/sources' ? 'settings-active' : ''} onClick={() => setMobileOpen(false)}><Database size={18} /><span>Data Sources</span></Link>
+          <Link to="/settings" title={collapsed ? 'System Settings' : undefined} className={location.pathname === '/settings' ? 'settings-active' : ''} onClick={() => setMobileOpen(false)}><SlidersHorizontal size={18} /><span>System Settings</span></Link>
+        </div>}
+        <button className="sidebar-collapse" onClick={() => window.matchMedia('(max-width: 820px)').matches ? setMobileOpen(false) : setCollapsed((value) => !value)} title={collapsed ? 'Expand' : 'Collapse'}><PanelLeftClose size={18} /><span>{collapsed ? 'Expand' : 'Collapse'}</span></button>
       </div>
     </aside>
-    {open && <button className="sidebar-scrim" onClick={() => setOpen(false)} aria-label="Close navigation" />}
-    <div className="main-column">
-      <header className="topbar">
-        <button className="mobile-menu" onClick={() => setOpen(true)} aria-label="Open navigation"><Menu size={20} /></button>
-        <div className="crumbs"><span>HEAT-HEALTH OPS</span><ChevronRight size={13} /><strong>{currentLabel}</strong></div>
-        <div className="topbar-center"><label className="city-selector"><MapPin size={13} /><span>BMC JURISDICTION</span><select aria-label="Current city" value={city} onChange={() => undefined}><option value={city}>{city}</option></select></label></div>
-        <div className="topbar-right">
-          <div className="clock"><span className="clock-label">IST</span><span>{clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' })}</span></div>
-          <NavLink to="/sources" className={`source-chip ${sourceClass}`}><span className="source-dot" />{source}</NavLink>
-          <button className="command-button" onClick={() => setPaletteOpen(true)}><Search size={15} /><span>Command</span><kbd>Ctrl K</kbd></button>
-        </div>
-      </header>
-      <main className="page-content">{children}</main>
-      <footer className="app-footer"><span><CircleDot size={12} /> HeatShield local decision-support</span><span>Actual BMC boundary snapshot · fallback data visibly labelled · no deployment</span></footer>
-    </div>
+    {mobileOpen && <button className="sidebar-mobile-scrim" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
+
+    <main className={`page-content ${location.pathname === '/' ? 'dashboard-page-content' : ''} ${location.pathname === '/map' || location.pathname === '/forecast' ? 'spatial-page-content' : ''}`}>{children}</main>
+
     {paletteOpen && <div className="command-overlay" role="presentation" onMouseDown={() => setPaletteOpen(false)}>
-      <div className="command-palette" role="dialog" aria-modal="true" aria-label="HeatShield command palette" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="command-input"><Command size={18} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search wards, sources, alerts, commands…" /><kbd>ESC</kbd></div>
-        <div className="command-results">{filtered.length ? filtered.map((item) => <button key={item.id} onClick={() => run(item)}><span className="command-result-icon">{item.kind === 'WARD' ? <MapPin size={15} /> : <Zap size={15} />}</span><span><strong>{item.label}</strong><small>{item.detail}</small></span><em>{item.kind}</em></button>) : <div className="command-empty"><FileSearch size={22} />No matching command or ward</div>}</div>
+      <div className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="command-input"><Search size={16} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setActiveIndex(0) }} onKeyDown={handlePaletteKey} placeholder="Search commands or wards…" aria-label="Search command palette" aria-activedescendant={filtered[activeIndex] ? `command-${filtered[activeIndex].id}` : undefined} /><kbd>ESC</kbd></div>
+        <div className="command-results" role="listbox">{filtered.length ? filtered.map((item, index) => <button id={`command-${item.id}`} key={item.id} onClick={() => run(item)} onMouseMove={() => setActiveIndex(index)} className={index === activeIndex ? 'command-active' : ''} role="option" aria-selected={index === activeIndex}><span className="command-result-icon">{item.kind === 'WARD' ? <MapPin size={14} /> : item.kind === 'FILTER' ? <Zap size={14} /> : <Command size={14} />}</span><span><strong>{item.label}</strong><small>{item.detail}</small></span><em>{item.kind}</em></button>) : <div className="command-empty"><FileSearch size={20} />No matching command or ward</div>}</div>
         <div className="command-footer"><span>↑↓ navigate</span><span>↵ open</span><span>Esc close</span></div>
       </div>
     </div>}

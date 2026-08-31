@@ -1,5 +1,6 @@
 import type {
   ActionPlan,
+  AlertAudience,
   AlertLog,
   AlertProviderStatus,
   AlertSimulation,
@@ -14,12 +15,14 @@ import type {
 
 const cache = new Map<string, { expires: number; value: unknown }>()
 let boundaryRequest: Promise<WardBoundaryCollection> | null = null
+const configuredApiBase = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '')
+const apiBase = configuredApiBase.endsWith('/api') ? configuredApiBase : `${configuredApiBase}/api`
 
 const api = async <T>(path: string, options?: RequestInit, cacheMs = 0): Promise<T> => {
   const cacheKey = `${options?.method ?? 'GET'}:${path}`
   const cached = cache.get(cacheKey)
   if (cacheMs && cached && cached.expires > Date.now()) return cached.value as T
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`${apiBase}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     ...options,
   })
@@ -58,6 +61,9 @@ export const getWardBoundaries = () => {
 export const getWard = (wardId: string, forecastDay = 0) =>
   api<WardDetail>(`/wards/${encodeURIComponent(wardId)}?forecast_day=${forecastDay}`, undefined, 10_000)
 
+export const getWardForecast = (wardId: string) =>
+  api<WardSummary[]>(`/wards/${encodeURIComponent(wardId)}/forecast`, undefined, 10_000)
+
 export const getWardRisk = (wardId: string) => api<WardDetail>(`/wards/${encodeURIComponent(wardId)}/risk`, undefined, 10_000)
 
 export const getActionPlan = (wardId: string, forecastDay = 0) =>
@@ -72,17 +78,21 @@ export const updateActionTask = (wardId: string, taskKey: string, status: Action
 export const simulateAlert = (payload: { ward_id: string; audience: string; channel: string; forecast_day: number }) =>
   api<AlertSimulation>('/alerts/simulate', { method: 'POST', body: JSON.stringify(payload) })
 
+export const previewAlert = (payload: { ward_id: string; audience: string; channel: string; forecast_day: number }) =>
+  api<AlertSimulation>('/alerts/preview', { method: 'POST', body: JSON.stringify(payload) })
+
 export const sendTestAlert = (payload: {
   ward_id: string
   audience: string
   channel: string
   forecast_day: number
-  recipient: string
+  recipient?: string | null
   confirm: boolean
   confirmation_text: string
 }) => api<AlertSimulation>('/alerts/send-test', { method: 'POST', body: JSON.stringify(payload) })
 
 export const getAlerts = () => api<AlertLog[]>('/alerts', undefined, 3_000)
+export const getAlertAudiences = () => api<AlertAudience[]>('/alerts/audiences', undefined, 60_000)
 export const getAlertProvider = () => api<AlertProviderStatus>('/alerts/provider', undefined, 5_000)
 export const getSources = () => api<SourcesResponse>('/sources', undefined, 10_000)
 export const getSystemStatus = () => api<SystemStatus>('/system/status', undefined, 10_000)

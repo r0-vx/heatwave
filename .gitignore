@@ -33,5 +33,10 @@ coverage/
 .coverage
 htmlcov/
 *.log
+*.tmp
+*.temp
+.vercel/
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db

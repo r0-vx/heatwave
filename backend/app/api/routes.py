@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from ..alerts import AlertDeliveryError, LocalAlertSimulator, Msg91TestProvider, alert_provider_status
+from ..alerts import AlertDeliveryError, LocalAlertSimulator, Msg91TestProvider, alert_provider_status, audience_catalog
 from ..config import settings
 from ..database import get_db
 from ..models import Alert, ResponseTask, SystemEvent, Ward
@@ -53,17 +53,27 @@ def _alert_context(db: Session, request: AlertSimulationRequest) -> tuple[dict[s
         detail = ward_detail(db, request.ward_id, request.forecast_day)
     except KeyError:
         raise _not_found(request.ward_id) from None
+    forecast_rows = ward_forecast(db, request.ward_id)
+    baseline = forecast_rows[0]
+    comparison = detail if request.forecast_day > 0 else forecast_rows[min(1, len(forecast_rows) - 1)]
+    difference = comparison["htsi"] - baseline["htsi"]
+    escalation_trend = "Increasing" if difference > 1 else "Decreasing" if difference < -1 else "Stable"
+    plan = recommendations_for(detail["risk_category"], detail["name"], detail["vulnerability_reasons"])
     preview = LocalAlertSimulator().simulate(
         ward_name=detail["name"],
         ward_id=detail["id"],
         risk_category=detail["risk_category"],
         htsi=detail["htsi"],
         health_risk=detail["health_risk"],
-        forecast_duration=sum(
-            1 for item in ward_forecast(db, request.ward_id) if item["risk_category"] in {"DANGEROUS", "EXTREME"}
-        ),
+        wbgt=detail["wbgt"],
+        vulnerability_index=detail["vulnerability_index"],
+        audience=request.audience,
         vulnerability_reasons=detail["vulnerability_reasons"],
         forecast_label=_forecast_label(request.forecast_day),
+        population_at_risk=detail.get("health_history", {}).get("population_at_risk") if detail.get("health_history") else None,
+        escalation_trend=escalation_trend,
+        major_vulnerable_group=detail["major_vulnerable_group"],
+        recommendations=[item["title"] for item in plan["actions"]],
     )
     return detail, preview
 
@@ -391,7 +401,7 @@ def simulate_alert(request: AlertSimulationRequest, db: Session = Depends(get_db
     detail, previews = _alert_context(db, request)
     record = Alert(
         ward_id=request.ward_id,
-        audience=request.audience,
+        audience=previews["previews"]["SMS Preview"]["audience"],
         channel=request.channel,
         title=f"{detail['risk_category']} Heat Alert",
         message=previews["previews"].get("SMS Preview", {}).get("message", ""),
@@ -415,6 +425,18 @@ def simulate_alert(request: AlertSimulationRequest, db: Session = Depends(get_db
     return previews
 
 
+@router.post("/alerts/preview", response_model=AlertSimulationResponse, tags=["alerts"])
+def preview_alert(request: AlertSimulationRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    _ensure_seeded(db)
+    _, preview = _alert_context(db, request)
+    return preview
+
+
+@router.get("/alerts/audiences", tags=["alerts"])
+def alert_audiences() -> list[dict[str, str]]:
+    return audience_catalog()
+
+
 @router.get("/alerts/provider", tags=["alerts"])
 def alert_provider() -> dict[str, Any]:
     return alert_provider_status()
@@ -430,9 +452,10 @@ def send_test_alert(request: AlertSendRequest, db: Session = Depends(get_db)) ->
     detail, previews = _alert_context(db, request)
     message = previews["previews"]["SMS Preview"]["message"]
     provider = Msg91TestProvider()
+    recipient = request.recipient or settings.test_phone_number or ""
     try:
         delivery = provider.send_test(
-            recipient=request.recipient,
+            recipient=recipient,
             ward_name=detail["name"],
             risk_category=detail["risk_category"],
             message=message,
@@ -440,13 +463,13 @@ def send_test_alert(request: AlertSendRequest, db: Session = Depends(get_db)) ->
     except AlertDeliveryError as exc:
         failure = Alert(
             ward_id=request.ward_id,
-            audience=request.audience,
+            audience=previews["previews"]["SMS Preview"]["audience"],
             channel="SMS",
             title=f"{detail['risk_category']} Heat Alert — test failed",
             message=message,
             status="FAILED",
             simulated=False,
-            payload={"provider": provider.name, "recipient": request.recipient, "error": str(exc), "previews": previews["previews"]},
+            payload={"provider": provider.name, "recipient": recipient, "error": str(exc), "previews": previews["previews"]},
         )
         db.add(failure)
         db.add(
@@ -464,7 +487,7 @@ def send_test_alert(request: AlertSendRequest, db: Session = Depends(get_db)) ->
     payload = {**previews, **delivery, "simulated": False}
     record = Alert(
         ward_id=request.ward_id,
-        audience=request.audience,
+        audience=previews["previews"]["SMS Preview"]["audience"],
         channel="SMS",
         title=f"{detail['risk_category']} Heat Alert — test",
         message=message,

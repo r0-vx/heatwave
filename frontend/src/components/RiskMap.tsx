@@ -1,12 +1,17 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
-import type { ExpressionSpecification, GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent, StyleSpecification } from 'maplibre-gl'
+import type { ExpressionSpecification, GeoJSONSource, LngLatBoundsLike, Map as MapLibreMap, MapLayerMouseEvent, StyleSpecification } from 'maplibre-gl'
 import type { FeatureCollection, Geometry } from 'geojson'
-import { Crosshair, MapPinned } from 'lucide-react'
+import { Layers3 } from 'lucide-react'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type { WardBoundaryCollection, WardSummary } from '../types'
 
 export type MapMetric = 'risk' | 'htsi' | 'wbgt' | 'vulnerability' | 'health'
+export interface MapSelectionAnchor { x: number; y: number; width: number; height: number }
+export type RiskGroup = 'low' | 'moderate' | 'high' | 'extreme'
+export type RiskVisibility = Record<RiskGroup, boolean>
+
+const MUMBAI_BOUNDS: LngLatBoundsLike = [[72.75, 18.88], [73.03, 19.32]]
 
 const localStyle: StyleSpecification = {
   version: 8,
@@ -19,17 +24,17 @@ const localStyle: StyleSpecification = {
     },
   },
   layers: [
-    { id: 'background', type: 'background', paint: { 'background-color': '#071019' } },
+    { id: 'background', type: 'background', paint: { 'background-color': '#090b0c' } },
     {
       id: 'osm-dimmed',
       type: 'raster',
       source: 'osm',
       paint: {
-        'raster-opacity': 0.32,
-        'raster-saturation': -0.72,
-        'raster-contrast': 0.12,
+        'raster-opacity': 0.42,
+        'raster-saturation': -1,
+        'raster-contrast': 0.18,
         'raster-brightness-min': 0,
-        'raster-brightness-max': 0.44,
+        'raster-brightness-max': 0.34,
       },
     },
   ],
@@ -37,12 +42,12 @@ const localStyle: StyleSpecification = {
 
 const riskExpression: ExpressionSpecification = [
   'match', ['get', 'risk_category'],
-  'LOW', '#24c997',
-  'CAUTION', '#d5b547',
-  'HIGH', '#f09a3e',
-  'DANGEROUS', '#ed5d52',
-  'EXTREME', '#b92645',
-  '#536171',
+  'LOW', '#607b61',
+  'CAUTION', '#9b8b45',
+  'HIGH', '#b26835',
+  'DANGEROUS', '#a84c39',
+  'EXTREME', '#b23b30',
+  '#54585a',
 ]
 
 const metricExpression = (property: string, stops: Array<[number, string]>): ExpressionSpecification => [
@@ -52,18 +57,39 @@ const metricExpression = (property: string, stops: Array<[number, string]>): Exp
 
 const expressions: Record<MapMetric, ExpressionSpecification> = {
   risk: riskExpression,
-  htsi: metricExpression('htsi', [[0, '#183f45'], [35, '#d5b547'], [60, '#f09a3e'], [80, '#ed5d52'], [100, '#8f1735']]),
-  wbgt: metricExpression('wbgt', [[20, '#183f45'], [26, '#d5b547'], [30, '#f09a3e'], [34, '#ed5d52'], [40, '#8f1735']]),
-  vulnerability: metricExpression('vulnerability_index', [[0, '#173c52'], [40, '#3d8d89'], [60, '#d5b547'], [80, '#ed5d52'], [100, '#8f1735']]),
-  health: metricExpression('health_risk', [[0, '#173c52'], [35, '#3d8d89'], [60, '#d5b547'], [80, '#ed5d52'], [100, '#8f1735']]),
+  htsi: metricExpression('htsi', [[0, '#4f5d50'], [35, '#9b8b45'], [60, '#b26835'], [80, '#a84c39'], [100, '#8a302b']]),
+  wbgt: metricExpression('wbgt', [[20, '#4f5d50'], [26, '#9b8b45'], [30, '#b26835'], [34, '#a84c39'], [40, '#8a302b']]),
+  vulnerability: metricExpression('vulnerability_index', [[0, '#35393a'], [40, '#555a5b'], [60, '#777a76'], [80, '#9b8b45'], [100, '#b26835']]),
+  health: metricExpression('health_risk', [[0, '#4f5d50'], [35, '#9b8b45'], [60, '#b26835'], [80, '#a84c39'], [100, '#8a302b']]),
 }
 
 const legends: Record<MapMetric, Array<[string, string]>> = {
-  risk: [['LOW', '#24c997'], ['CAUTION', '#d5b547'], ['HIGH', '#f09a3e'], ['DANGEROUS', '#ed5d52'], ['EXTREME', '#b92645']],
-  htsi: [['0–34', '#183f45'], ['35–59', '#d5b547'], ['60–79', '#f09a3e'], ['80–100', '#b92645']],
-  wbgt: [['<26°C', '#183f45'], ['26–29°C', '#d5b547'], ['30–33°C', '#f09a3e'], ['34°C+', '#b92645']],
-  vulnerability: [['LOW', '#173c52'], ['MODERATE', '#3d8d89'], ['HIGH', '#d5b547'], ['VERY HIGH', '#b92645']],
-  health: [['LOW', '#173c52'], ['MODERATE', '#3d8d89'], ['HIGH', '#d5b547'], ['VERY HIGH', '#b92645']],
+  risk: [['Low', '#607b61'], ['Moderate', '#9b8b45'], ['High', '#b26835'], ['Extreme', '#b23b30']],
+  htsi: [['Low', '#4f5d50'], ['Moderate', '#9b8b45'], ['High', '#b26835'], ['Extreme', '#a84c39']],
+  wbgt: [['Low', '#4f5d50'], ['Moderate', '#9b8b45'], ['High', '#b26835'], ['Extreme', '#a84c39']],
+  vulnerability: [['Low', '#35393a'], ['Moderate', '#555a5b'], ['High', '#777a76'], ['Very high', '#b26835']],
+  health: [['Low', '#4f5d50'], ['Moderate', '#9b8b45'], ['High', '#b26835'], ['Extreme', '#a84c39']],
+}
+
+const riskGroups: Array<[RiskGroup, string, string]> = [
+  ['low', 'Low', '#607b61'],
+  ['moderate', 'Moderate', '#9b8b45'],
+  ['high', 'High', '#b26835'],
+  ['extreme', 'Extreme', '#b23b30'],
+]
+const allRiskVisible: RiskVisibility = { low: true, moderate: true, high: true, extreme: true }
+
+const groupForRisk = (category: string): RiskGroup => category === 'LOW' ? 'low' : category === 'CAUTION' ? 'moderate' : category === 'EXTREME' ? 'extreme' : 'high'
+
+function boundsForFeatures(features: FeatureCollection<Geometry>['features']) {
+  const bounds = new maplibregl.LngLatBounds()
+  const visit = (value: unknown) => {
+    if (!Array.isArray(value)) return
+    if (value.length >= 2 && typeof value[0] === 'number' && typeof value[1] === 'number') bounds.extend([value[0], value[1]])
+    else value.forEach(visit)
+  }
+  features.forEach((feature) => visit('coordinates' in feature.geometry ? feature.geometry.coordinates : []))
+  return bounds
 }
 
 function createPopupNode(properties: Record<string, unknown>) {
@@ -85,19 +111,39 @@ function RiskMapComponent({
   selectedId,
   metric,
   onSelect,
+  onClear,
+  onCycleMetric,
+  fitSelection = false,
+  riskVisibility = allRiskVisible,
+  onToggleRisk,
+  onFocusExtreme,
+  onResetRisk,
+  focusExtreme = false,
+  showHoverPopup = true,
 }: {
   boundaries: WardBoundaryCollection
   wards: WardSummary[]
   selectedId?: string
   metric: MapMetric
-  onSelect: (id: string) => void
+  onSelect: (id: string, anchor: MapSelectionAnchor) => void
+  onClear?: () => void
+  onCycleMetric?: () => void
+  fitSelection?: boolean
+  riskVisibility?: RiskVisibility
+  onToggleRisk?: (group: RiskGroup) => void
+  onFocusExtreme?: () => void
+  onResetRisk?: () => void
+  focusExtreme?: boolean
+  showHoverPopup?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRefs = useRef<maplibregl.Marker[]>([])
   const selectRef = useRef(onSelect)
+  const clearRef = useRef(onClear)
   const [ready, setReady] = useState(false)
   selectRef.current = onSelect
+  clearRef.current = onClear
 
   const merged = useMemo<FeatureCollection<Geometry>>(() => {
     const rows = new Map(wards.map((ward) => [ward.id, ward]))
@@ -105,6 +151,7 @@ function RiskMapComponent({
       type: 'FeatureCollection',
       features: boundaries.features.map((feature) => {
         const ward = rows.get(String(feature.properties?.id))
+        const riskGroup = groupForRisk(ward?.risk_category ?? '')
         return {
           ...feature,
           properties: {
@@ -115,11 +162,13 @@ function RiskMapComponent({
             health_risk: ward?.health_risk ?? null,
             risk_category: ward?.risk_category ?? 'UNAVAILABLE',
             visible: Boolean(ward),
+            risk_group: riskGroup,
+            risk_visible: Boolean(ward) && riskVisibility[riskGroup],
           },
         }
       }),
     }
-  }, [boundaries, wards])
+  }, [boundaries, riskVisibility, wards])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -134,7 +183,8 @@ function RiskMapComponent({
       renderWorldCopies: false,
     })
     mapRef.current = map
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-left')
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left')
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 54, unit: 'metric' }), 'bottom-left')
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
     const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 12, maxWidth: '330px' })
     map.once('style.load', () => {
@@ -145,48 +195,86 @@ function RiskMapComponent({
         source: 'bmc-wards',
         paint: {
           'fill-color': expressions.risk,
-          'fill-opacity': ['case', ['get', 'visible'], 0.6, 0.06],
-          'fill-outline-color': '#9ab0bf',
+          'fill-opacity': ['case', ['get', 'risk_visible'], 0.5, ['get', 'visible'], 0.025, 0.015],
+          'fill-outline-color': '#a3a6a4',
         },
       })
       map.addLayer({
         id: 'ward-line',
         type: 'line',
         source: 'bmc-wards',
-        paint: { 'line-color': '#9ab0bf', 'line-width': 0.8, 'line-opacity': 0.7 },
+        paint: { 'line-color': '#a8aaa8', 'line-width': 0.65, 'line-opacity': ['case', ['get', 'risk_visible'], 0.62, 0.12] },
+      })
+      map.addLayer({
+        id: 'ward-hover',
+        type: 'line',
+        source: 'bmc-wards',
+        filter: ['==', ['get', 'id'], '__none__'],
+        paint: { 'line-color': '#f0f0ed', 'line-width': 1.35, 'line-opacity': 0.92 },
       })
       map.addLayer({
         id: 'ward-selected',
         type: 'line',
         source: 'bmc-wards',
         filter: ['==', ['get', 'id'], selectedId ?? ''],
-        paint: { 'line-color': '#f4f7f9', 'line-width': 3, 'line-opacity': 1 },
+        paint: { 'line-color': '#f2f1ed', 'line-width': 2.1, 'line-opacity': 1 },
       })
+      const light = document.documentElement.dataset.theme === 'light'
+      if (light) {
+        map.setPaintProperty('background', 'background-color', '#e7e7e3')
+        map.setPaintProperty('osm-dimmed', 'raster-opacity', 0.68)
+        map.setPaintProperty('osm-dimmed', 'raster-brightness-min', 0.28)
+        map.setPaintProperty('osm-dimmed', 'raster-brightness-max', 0.92)
+      }
       markerRefs.current = boundaries.features.map((feature) => {
         const element = document.createElement('button')
         element.className = 'ward-code-marker'
         element.type = 'button'
         element.textContent = feature.properties.code
         element.title = feature.properties.name
-        element.addEventListener('click', () => selectRef.current(feature.properties.id))
+        element.dataset.wardId = feature.properties.id
+        element.addEventListener('click', () => {
+          const point = map.project([feature.properties.label_lon, feature.properties.label_lat])
+          const container = map.getContainer()
+          selectRef.current(feature.properties.id, { x: point.x, y: point.y, width: container.clientWidth, height: container.clientHeight })
+        })
         return new maplibregl.Marker({ element, anchor: 'center' })
           .setLngLat([feature.properties.label_lon, feature.properties.label_lat])
           .addTo(map)
       })
-      map.fitBounds([[72.75, 18.88], [73.03, 19.32]], { padding: 28, duration: 0 })
+      map.fitBounds(MUMBAI_BOUNDS, { padding: 28, duration: 0 })
       setReady(true)
     })
     map.on('click', 'ward-fill', (event: MapLayerMouseEvent) => {
+      if (!event.features?.[0]?.properties?.risk_visible) return
       const id = event.features?.[0]?.properties?.id as string | undefined
-      if (id) selectRef.current(id)
+      if (id) {
+        popup.remove()
+        const container = map.getContainer()
+        selectRef.current(id, { x: event.point.x, y: event.point.y, width: container.clientWidth, height: container.clientHeight })
+      }
+    })
+    map.on('click', (event) => {
+      if (!map.getLayer('ward-fill')) return
+      const hit = map.queryRenderedFeatures(event.point, { layers: ['ward-fill'] })
+      if (!hit.length) clearRef.current?.()
     })
     map.on('mouseenter', 'ward-fill', () => { map.getCanvas().style.cursor = 'pointer' })
     map.on('mousemove', 'ward-fill', (event: MapLayerMouseEvent) => {
       const properties = event.features?.[0]?.properties
-      if (!properties) return
-      popup.setLngLat(event.lngLat).setDOMContent(createPopupNode(properties)).addTo(map)
+      if (!properties?.risk_visible) {
+        map.setFilter('ward-hover', ['==', ['get', 'id'], '__none__'])
+        popup.remove()
+        return
+      }
+      map.setFilter('ward-hover', ['==', ['get', 'id'], String(properties.id)])
+      if (showHoverPopup) popup.setLngLat(event.lngLat).setDOMContent(createPopupNode(properties)).addTo(map)
     })
-    map.on('mouseleave', 'ward-fill', () => { map.getCanvas().style.cursor = ''; popup.remove() })
+    map.on('mouseleave', 'ward-fill', () => {
+      map.getCanvas().style.cursor = ''
+      map.setFilter('ward-hover', ['==', ['get', 'id'], '__none__'])
+      popup.remove()
+    })
     const observer = new ResizeObserver(() => map.resize())
     observer.observe(containerRef.current)
     return () => {
@@ -203,8 +291,13 @@ function RiskMapComponent({
 
   useEffect(() => {
     const source = mapRef.current?.getSource('bmc-wards') as GeoJSONSource | undefined
-    if (ready && source) source.setData(merged)
-  }, [merged, ready])
+    if (!ready || !source) return
+    source.setData(merged)
+    const visibleIds = new Set(wards.filter((ward) => riskVisibility[groupForRisk(ward.risk_category)]).map((ward) => ward.id))
+    markerRefs.current.forEach((marker) => {
+      marker.getElement().hidden = !visibleIds.has(marker.getElement().dataset.wardId ?? '')
+    })
+  }, [merged, ready, riskVisibility, wards])
 
   useEffect(() => {
     const map = mapRef.current
@@ -218,12 +311,61 @@ function RiskMapComponent({
     map.setFilter('ward-selected', ['==', ['get', 'id'], selectedId ?? ''])
   }, [selectedId, ready])
 
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !fitSelection || !map) return
+    const timer = window.setTimeout(() => {
+      map.resize()
+      map.fitBounds(MUMBAI_BOUNDS, { padding: 28, duration: 360 })
+    }, 210)
+    return () => window.clearTimeout(timer)
+  }, [fitSelection, ready, selectedId])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!ready || !focusExtreme || !map) return
+    const extreme = merged.features.filter((feature) => feature.properties?.risk_group === 'extreme' && feature.properties?.visible)
+    if (!extreme.length) return
+    const bounds = boundsForFeatures(extreme)
+    if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 52, maxZoom: 12.2, duration: 500 })
+  }, [focusExtreme, merged, ready])
+
+  useEffect(() => {
+    const reset = () => mapRef.current?.fitBounds(MUMBAI_BOUNDS, { padding: 28, duration: 550 })
+    const resize = () => {
+      mapRef.current?.resize()
+      window.setTimeout(() => mapRef.current?.resize(), 220)
+    }
+    const applyTheme = (event: Event) => {
+      const map = mapRef.current
+      if (!map?.getLayer('osm-dimmed')) return
+      const light = (event as CustomEvent<'dark' | 'light'>).detail === 'light'
+      map.setPaintProperty('background', 'background-color', light ? '#e7e7e3' : '#090b0c')
+      map.setPaintProperty('osm-dimmed', 'raster-opacity', light ? 0.68 : 0.42)
+      map.setPaintProperty('osm-dimmed', 'raster-brightness-min', light ? 0.28 : 0)
+      map.setPaintProperty('osm-dimmed', 'raster-brightness-max', light ? 0.92 : 0.34)
+    }
+    window.addEventListener('heatshield:reset-map', reset)
+    window.addEventListener('heatshield:layout-change', resize)
+    window.addEventListener('heatshield:theme-change', applyTheme)
+    return () => {
+      window.removeEventListener('heatshield:reset-map', reset)
+      window.removeEventListener('heatshield:layout-change', resize)
+      window.removeEventListener('heatshield:theme-change', applyTheme)
+    }
+  }, [])
+
   return <div className="map-shell ops-map-shell">
     <div ref={containerRef} className="risk-map" aria-label="Interactive BMC ward heat-health map" />
     {!ready && <div className="map-loading">Initializing ward geometry…</div>}
-    <div className="map-coordinate-tag"><Crosshair size={12} />MUMBAI · EPSG:4326</div>
-    <div className="map-legend ops-map-legend"><div className="legend-title">{metric.toUpperCase()} LAYER</div>{legends[metric].map(([label, colour]) => <div className="legend-item" key={label}><span style={{ backgroundColor: colour }} />{label}</div>)}</div>
-    <div className="map-note"><MapPinned size={13} />24 actual BMC administrative ward polygons · DataMeet CC BY 4.0 snapshot</div>
+    <button className="map-reset-control" type="button" onClick={onCycleMetric} disabled={!ready || !onCycleMetric} aria-label="Cycle map layer" title="Cycle map layer"><Layers3 size={13} /></button>
+    <div className={`map-legend ops-map-legend ${onToggleRisk ? 'interactive-map-legend' : ''}`} aria-label={`${metric} legend`}>
+      {onToggleRisk ? <>
+        <strong>Risk Level</strong>
+        {riskGroups.map(([group, label, colour]) => <button key={group} onClick={() => onToggleRisk(group)} aria-label={`${riskVisibility[group] ? 'Hide' : 'Show'} ${label} risk wards`} aria-pressed={riskVisibility[group]}><span className="legend-checkbox">{riskVisibility[group] ? '✓' : ''}</span><i style={{ backgroundColor: colour }} /><span>{label}</span></button>)}
+        <div className="legend-actions"><button onClick={onFocusExtreme} className={focusExtreme ? 'active' : ''}>Focus Extreme</button><button onClick={onResetRisk}>Reset</button></div>
+      </> : legends[metric].map(([label, colour]) => <div className="legend-item" key={label}><span style={{ backgroundColor: colour }} />{label}</div>)}
+    </div>
   </div>
 }
 

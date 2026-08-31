@@ -24,17 +24,27 @@ def _bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _database_url(value: str | None) -> str:
+    url = value or "sqlite:///./heatshield_ops.db"
+    if url.startswith("postgres://"):
+        return f"postgresql+psycopg://{url.removeprefix('postgres://')}"
+    if url.startswith("postgresql://"):
+        return f"postgresql+psycopg://{url.removeprefix('postgresql://')}"
+    return url
+
+
+DATABASE_URL = _database_url(os.getenv("DATABASE_URL"))
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "HeatShield Mumbai Operations API")
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./heatshield_ops.db")
+    database_url: str = DATABASE_URL
     weather_provider: str = os.getenv("WEATHER_PROVIDER", "imd").lower()
     cors_origins: tuple[str, ...] = tuple(_origins(os.getenv("CORS_ORIGINS")))
     demo_city: str = os.getenv("DEMO_CITY", "Mumbai")
     demo_state: str = os.getenv("DEMO_STATE", "Maharashtra")
-    postgis_enabled: bool = os.getenv("DATABASE_URL", "sqlite:///./heatshield_ops.db").startswith(
-        ("postgresql://", "postgresql+psycopg://", "postgresql+asyncpg://")
-    )
+    postgis_enabled: bool = DATABASE_URL.startswith(("postgresql+psycopg://", "postgresql+asyncpg://"))
     imd_api_base: str = os.getenv("IMD_API_BASE", "https://api.imd.gov.in/api/v1")
     imd_api_key: str | None = os.getenv("IMD_API_KEY")
     imd_api_key_header: str = os.getenv("IMD_API_KEY_HEADER", "x-api-key")

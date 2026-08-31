@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -44,6 +44,12 @@ def seed_demo_data(db: Session) -> None:
     city = db.scalar(select(Ward.city).limit(1))
     if ward_count == 24 and city == "Mumbai":
         return
+    if settings.postgis_enabled and ward_count == 0:
+        db.execute(text("SELECT pg_advisory_xact_lock(26083)"))
+        ward_count = db.scalar(select(func.count(Ward.id))) or 0
+        city = db.scalar(select(Ward.city).limit(1))
+        if ward_count == 24 and city == "Mumbai":
+            return
     if ward_count:
         raise RuntimeError(
             "The selected database contains a different seed schema. Use the default heatshield_ops.db or migrate the database explicitly."
