@@ -41,7 +41,7 @@ Routes are lazy-loaded. MapLibre and chart dependencies are split into separatel
 cd C:\Users\rohit\OneDrive\Desktop\kodin\heatwave\backend
 
 py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-local.txt
 $env:PYTHONPATH = "."
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
