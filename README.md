@@ -1,8 +1,17 @@
 # HeatShield — Mumbai Heat-Health Operations
 
-Local-only municipal decision-support for **SIH26083 — Extreme Heatwave Early Warning & Human Thermal Stress Index**. The upgraded system is built around Mumbai's 24 BMC administrative wards, source provenance, operational response tasks, alert review and an auditable event stream.
+Municipal decision-support for **SIH26083 — Extreme Heatwave Early Warning & Human Thermal Stress Index**. The system is built around Mumbai's 24 BMC administrative wards, source provenance, operational response tasks, alert review and an auditable event stream.
 
-There is no deployment configuration. The working target is `http://127.0.0.1:5173` with a local FastAPI service at `http://127.0.0.1:8000`.
+## Deployment
+
+- Architecture: Vercel React/Vite frontend → Vercel FastAPI service → Neon PostgreSQL with PostGIS.
+- Frontend: <https://sih26083-heatwave.vercel.app>
+- Backend: <https://sih26083-heatwave-api.vercel.app> (`/api/health`, `/docs`)
+- GitHub `main` is connected to both Vercel projects for automatic production deployments.
+- Required production variable names: `DATABASE_URL`, `CORS_ORIGINS`, `APP_ENV`, `WEATHER_PROVIDER`, `ALERT_PROVIDER`, `SMS_TEST_MODE`, and frontend-only `VITE_API_BASE_URL`.
+- Optional provider variable names: `IMD_API_KEY`, `IMD_STATION_ID`, `IMD_API_KEY_HEADER`, `IMD_API_BASE`, `MOSDAC_TOKEN`, `MSG91_AUTH_KEY`, `MSG91_TEMPLATE_ID`, `MSG91_SENDER_ID`, `MSG91_FLOW_URL`, and `TEST_PHONE_NUMBER`.
+
+No secret values are stored in this repository. The production alert provider remains simulation-only.
 
 ## What is real, connected, or simulated
 
