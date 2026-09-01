@@ -1,5 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import * as maplibregl from 'maplibre-gl'
+import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import type { ExpressionSpecification, GeoJSONSource, LngLatBoundsLike, Map as MapLibreMap, MapLayerMouseEvent, StyleSpecification } from 'maplibre-gl'
 import type { FeatureCollection, Geometry } from 'geojson'
 import { Layers3 } from 'lucide-react'
@@ -12,6 +13,8 @@ export type RiskGroup = 'low' | 'moderate' | 'high' | 'extreme'
 export type RiskVisibility = Record<RiskGroup, boolean>
 
 const MUMBAI_BOUNDS: LngLatBoundsLike = [[72.75, 18.88], [73.03, 19.32]]
+
+maplibregl.setWorkerUrl(mapLibreWorkerUrl)
 
 const localStyle: StyleSpecification = {
   version: 8,
